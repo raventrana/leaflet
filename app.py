@@ -105,13 +105,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Geocoding API with Caching - Requesting polygon boundaries
+# Geocoding API with Caching
 @st.cache_data(show_spinner="Searching OpenStreetMap Boundaries...", ttl=3600)
 def search_city_api(query):
     if not query or len(query.strip()) < 2:
         return []
     safe_query = urllib.parse.quote(query.strip())
-    # Added polygon_geojson=1 to fetch full geometric boundary arrays
     url = f"https://nominatim.openstreetmap.org/search?q={safe_query}&format=json&addressdetails=1&limit=8&polygon_geojson=1"
     headers = {"User-Agent": "LeafletStreamlitCityExplorer/1.0 (contact: support@leafletapp.local)"}
     try:
@@ -162,41 +161,6 @@ with st.sidebar:
         
     st.markdown("<hr style='margin: 1.25rem 0; border: 0; border-top: 1px solid #E2E8F0;' />", unsafe_allow_html=True)
     
-    st.markdown('<p style="font-weight: 600; font-size: 0.9rem; margin-bottom: 0.5rem; color: #334155;">Search Location</p>', unsafe_allow_html=True)
-    user_query = st.text_input("Enter City / Location Name", value=st.session_state.search_input_val, placeholder="e.g. Berlin, Mumbai...", label_visibility="collapsed")
-    
-    if user_query != st.session_state.search_input_val:
-        st.session_state.search_input_val = user_query
-
-    search_results = []
-    if st.session_state.search_input_val:
-        search_results = search_city_api(st.session_state.search_input_val)
-        
-    if search_results:
-        st.markdown('<p style="font-weight: 500; font-size: 0.85rem; margin-top: 0.75rem; margin-bottom: 0.25rem; color: #64748B;">Matches Found:</p>', unsafe_allow_html=True)
-        result_options = []
-        for r in search_results:
-            name = r.get("display_name", "Unknown")
-            if len(name) > 65: name = name[:62] + "..."
-            result_options.append(name)
-            
-        default_idx = 0
-        if st.session_state.selected_city_data:
-            current_id = st.session_state.selected_city_data.get("place_id")
-            for idx, r in enumerate(search_results):
-                if r.get("place_id") == current_id:
-                    default_idx = idx
-                    break
-                    
-        selected_option_name = st.selectbox("Select matching location", options=result_options, index=default_idx, label_visibility="collapsed", key="matching_locations_selectbox")
-        selected_idx = result_options.index(selected_option_name)
-        selected_city = search_results[selected_idx]
-        
-        if not st.session_state.selected_city_data or st.session_state.selected_city_data.get("place_id") != selected_city.get("place_id"):
-            select_city(selected_city)
-            
-    st.markdown("<hr style='margin: 1.25rem 0; border: 0; border-top: 1px solid #E2E8F0;' />", unsafe_allow_html=True)
-    
     st.markdown('<p style="font-weight: 600; font-size: 0.9rem; margin-bottom: 0.5rem; color: #334155;">Map Layers</p>', unsafe_allow_html=True)
     TILES_CONFIG = {
         "CartoDB Positron (Light)": {"tiles": "CartoDB Positron", "attr": None},
@@ -207,36 +171,56 @@ with st.sidebar:
     layer_settings = TILES_CONFIG[selected_layer]
 
 # ================= MAIN BODY =================
-if not st.session_state.selected_city_data and search_results:
-    select_city(search_results[0])
-
-lat = st.session_state.map_center[0]
-lon = st.session_state.map_center[1]
-city_display_name = "Default Coordinates"
-address_details = {}
-calculated_area_sqkm = 0.0
-
-if st.session_state.selected_city_data:
-    city_display_name = st.session_state.selected_city_data.get("display_name", "Selected Location")
-    address_details = st.session_state.selected_city_data.get("address", {})
-    
-    # Calculate geometric area using Shapely if polygon data is present
-    geojson_data = st.session_state.selected_city_data.get("polygon_geojson")
-    if geojson_data and geojson_data.get("type") in ["Polygon", "MultiPolygon"]:
-        try:
-            geom = shape(geojson_data)
-            # Rough approximation calculation at equator scale transformed to SqKm
-            # Note: For hyper-exact geodetic areas, pyproj transformers are ideal.
-            calculated_area_sqkm = geom.area * 111.32 * 111.32
-        except Exception:
-            calculated_area_sqkm = 0.0
-
 main_col, details_col = st.columns([5, 2], gap="large")
 
 with main_col:
     st.markdown('<h1 style="margin-top: 0; margin-bottom: 0.25rem;">🗺️ Interactive Area Tool</h1>', unsafe_allow_html=True)
-    st.markdown(f'<p style="color: #64748B; margin-bottom: 1.5rem; font-size: 1.05rem;">Exploring <b>{city_display_name.split(",")[0]}</b> with Shape Controls</p>', unsafe_allow_html=True)
     
+    # 🔍 ADDED FEATURE: Core City Search Box inside Main Body
+    user_query = st.text_input("🔍 Search for a City or Region:", value=st.session_state.search_input_val, placeholder="Type city name and press Enter...")
+    if user_query != st.session_state.search_input_val:
+        st.session_state.search_input_val = user_query
+
+    search_results = search_city_api(st.session_state.search_input_val) if st.session_state.search_input_val else []
+        
+    if search_results:
+        result_options = [r.get("display_name", "Unknown")[:65] for r in search_results]
+        default_idx = 0
+        if st.session_state.selected_city_data:
+            current_id = st.session_state.selected_city_data.get("place_id")
+            for idx, r in enumerate(search_results):
+                if r.get("place_id") == current_id:
+                    default_idx = idx
+                    break
+                    
+        selected_option_name = st.selectbox("Confirm Location Match:", options=result_options, index=default_idx)
+        selected_idx = result_options.index(selected_option_name)
+        selected_city = search_results[selected_idx]
+        
+        if not st.session_state.selected_city_data or st.session_state.selected_city_data.get("place_id") != selected_city.get("place_id"):
+            select_city(selected_city)
+
+    if not st.session_state.selected_city_data and search_results:
+        select_city(search_results[0])
+
+    lat = st.session_state.map_center[0]
+    lon = st.session_state.map_center[1]
+    city_display_name = "Default Coordinates"
+    address_details = {}
+    calculated_area_sqkm = 0.0
+
+    if st.session_state.selected_city_data:
+        city_display_name = st.session_state.selected_city_data.get("display_name", "Selected Location")
+        address_details = st.session_state.selected_city_data.get("address", {})
+        
+        geojson_data = st.session_state.selected_city_data.get("polygon_geojson")
+        if geojson_data and geojson_data.get("type") in ["Polygon", "MultiPolygon"]:
+            try:
+                geom = shape(geojson_data)
+                calculated_area_sqkm = geom.area * 111.32 * 111.32
+            except Exception:
+                calculated_area_sqkm = 0.0
+
     # Initialize Folium Map canvas
     m = folium.Map(
         location=st.session_state.map_center,
@@ -247,7 +231,7 @@ with main_col:
         control_scale=True
     )
     
-    # 🛠️ FEATURE 1: Add Free-hand Drawing & Shape tool plugins
+    # 🛠️ FIXED HOVER FEATURE: Enable Leaflet metric system display calculations on screen
     draw_tool = Draw(
         export=False,
         position='topleft',
@@ -256,13 +240,20 @@ with main_col:
             'circle': False,
             'marker': False,
             'circlemarker': False,
-            'polygon': {'showArea': True, 'allowIntersection': False},
-            'rectangle': {'showArea': True}
+            'polygon': {
+                'showArea': True, 
+                'allowIntersection': False,
+                'metric': True  # Force metrics tracking parameters (m², hectares, km²)
+            },
+            'rectangle': {
+                'showArea': True,
+                'metric': True  # Force metric conversions automatically on the tool HUD
+            }
         }
     )
     draw_tool.add_to(m)
     
-    # 🏛️ FEATURE 2: Add Administrative Boundary Polygon
+    # Render Administrative Boundary Polygon
     if st.session_state.selected_city_data:
         geojson_data = st.session_state.selected_city_data.get("polygon_geojson")
         city_name = address_details.get("city") or address_details.get("town") or address_details.get("village") or city_display_name.split(",")[0]
@@ -288,27 +279,19 @@ with main_col:
                 tooltip=f"Boundary: {city_name}",
                 popup=folium.Popup(popup_html, max_width=250)
             ).add_to(m)
-        else:
-            # Fallback pin marker if API doesn't provide bounds configuration
-            folium.Marker(
-                location=[lat, lon],
-                tooltip=city_name,
-                icon=folium.Icon(color="purple", icon="info-sign")
-            ).add_to(m)
             
-        # Fit Map view dynamically around city bounds layout coordinates
         bbox = st.session_state.selected_city_data.get("boundingbox")
         if bbox and len(bbox) == 4:
             bbox_floats = [float(x) for x in bbox]
             m.fit_bounds([[bbox_floats[0], bbox_floats[2]], [bbox_floats[1], bbox_floats[3]]])
 
-    # Render dynamic updates map canvas frame
-    st_folium(m, width="100%", height=580, returned_objects=[], key=f"map_{lat}_{lon}_{selected_layer}")
+    # Dynamic bi-directional tracking to catch shape data geometry inputs
+    map_output = st_folium(m, width="100%", height=580, key=f"map_{lat}_{lon}_{selected_layer}")
 
 with details_col:
     st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
     
-    # Info Card: Labels & Area Metrics
+    # Box 1: Administrative Metrics
     city_lbl = address_details.get("city") or address_details.get("town") or address_details.get("village") or "N/A"
     county_lbl = address_details.get("county", "N/A")
     
@@ -328,12 +311,47 @@ with details_col:
             <span class="info-val"><span class="badge">{f"{calculated_area_sqkm:,.2f} km²" if calculated_area_sqkm > 0 else "N/A"}</span></span>
         </div>
     </div>
-    
-    <div class="premium-card">
-        <div class="card-title">🛠️ Canvas Controls</div>
-        <p style="font-size: 0.85rem; color: #64748B; margin-bottom: 0px; line-height: 1.5;">
-            • Click the <b>Polygon icon</b> on the map to draw your own custom shape.<br/>
-            • Hovering or closing the custom shape loops will display a live area calculation layout directly on your map pointer.
-        </p>
-    </div>
     """, unsafe_allow_html=True)
+
+    # 🏛️ NEW DIALOG/DETAILS BOX FEATURE: Catches freshly drawn custom maps vectors
+    st.markdown('<div class="premium-card">', unsafe_allow_html=True)
+    st.markdown('<div class="card-title">📐 Custom Draw Details</div>', unsafe_allow_html=True)
+    
+    drawn_polygon_detected = False
+    
+    if map_output and map_output.get("all_drawings"):
+        drawings = map_output.get("all_drawings")
+        if drawings and len(drawings) > 0:
+            last_shape = drawings[-1] # Target the most recently completed custom canvas object
+            geom_data = last_shape.get("geometry")
+            
+            if geom_data and geom_data.get("type") in ["Polygon", "Rectangle"]:
+                try:
+                    poly_shape = shape(geom_data)
+                    # Convert raw planar geojson coordinates to approximate target metrics
+                    raw_area_sqm = poly_shape.area * 111320 * 111320
+                    
+                    if raw_area_sqm >= 10_000:
+                        hectares = raw_area_sqm / 10000
+                        display_str = f"{hectares:,.2f} ha"
+                    else:
+                        display_str = f"{raw_area_sqm:,.1f} m²"
+                        
+                    st.markdown(f"""
+                    <div class="info-row">
+                        <span class="info-label">Shape Type</span>
+                        <span class="info-val"><span class="badge">{geom_data.get("type")}</span></span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Measured Area</span>
+                        <span class="info-val" style="color:#10B981; font-weight:700;">{display_str}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    drawn_polygon_detected = True
+                except Exception:
+                    pass
+
+    if not drawn_polygon_detected:
+        st.markdown('<p style="font-size: 0.85rem; color: #64748B; margin-bottom: 0px;">No drawn shapes detected yet. Select the polygon or rectangle toolbar tools on the left to sketch canvas vectors.</p>', unsafe_allow_html=True)
+        
+    st.markdown('</div>', unsafe_allow_html=True)
